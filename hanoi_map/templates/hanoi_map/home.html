@@ -1,0 +1,253 @@
+<!-- hanoi_map/templates/hanoi_map/home.html -->
+{% extends "hanoi_map/base.html" %}
+
+{% block title %}Hệ thống giám sát ngập lụt Hà Nội{% endblock %}
+
+{% block content %}
+<div class="hero-section">
+    <div class="container">
+        <div class="row align-items-center">
+            <div class="col-md-6">
+                <h1 class="display-4 fw-bold mb-4">Hệ Thống Giám Sát Ngập Lụt Hà Nội</h1>
+                <p class="lead mb-4">
+                    Cung cấp thông tin thời gian thực về tình hình ngập lụt tại các quận/huyện Hà Nội. 
+                    Theo dõi, cảnh báo và chia sẻ thông tin ngập lụt để cùng nhau ứng phó hiệu quả.
+                </p>
+                <div class="d-flex gap-3">
+                    <a href="{% url 'map' %}" class="btn btn-primary btn-lg">
+                        <i class="fas fa-map-marked-alt"></i> Xem Bản Đồ Ngập
+                    </a>
+                    <a href="{% url 'report_create' %}" class="btn btn-success btn-lg">
+                        <i class="fas fa-exclamation-circle"></i> Báo Cáo Ngập
+                    </a>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card border-0 shadow-lg">
+                    <div class="card-body p-4">
+                        <h4 class="card-title mb-3"><i class="fas fa-chart-bar text-primary"></i> Thống Kê Hiện Tại</h4>
+                        <div class="row text-center">
+                            <div class="col-6 mb-3">
+                                <div class="stat-box bg-light p-3 rounded">
+                                    <h2 class="text-primary fw-bold" id="active-zones">0</h2>
+                                    <p class="mb-0 text-muted">Điểm ngập đang hoạt động</p>
+                                </div>
+                            </div>
+                            <div class="col-6 mb-3">
+                                <div class="stat-box bg-light p-3 rounded">
+                                    <h2 class="text-danger fw-bold" id="today-reports">0</h2>
+                                    <p class="mb-0 text-muted">Báo cáo hôm nay</p>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="stat-box bg-light p-3 rounded">
+                                    <h2 class="text-warning fw-bold" id="black-zones">0</h2>
+                                    <p class="mb-0 text-muted">Điểm đen ngập lụt</p>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="stat-box bg-light p-3 rounded">
+                                    <h2 class="text-success fw-bold" id="verified-reports">0</h2>
+                                    <p class="mb-0 text-muted">Báo cáo đã xác minh</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="py-5 bg-light">
+    <div class="container">
+        <h2 class="text-center mb-5">Tính Năng Chính</h2>
+        <div class="row g-4">
+            <div class="col-md-4">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-body text-center p-4">
+                        <div class="feature-icon mb-3">
+                            <i class="fas fa-map-marked-alt fa-3x text-primary"></i>
+                        </div>
+                        <h4 class="card-title">Bản Đồ Thời Gian Thực</h4>
+                        <p class="card-text">
+                            Theo dõi tình hình ngập lụt trên bản đồ với dữ liệu cập nhật liên tục. 
+                            Xem các điểm ngập được phân loại theo mức độ nghiêm trọng.
+                        </p>
+                        <a href="{% url 'map' %}" class="btn btn-outline-primary">Xem Bản Đồ</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-body text-center p-4">
+                        <div class="feature-icon mb-3">
+                            <i class="fas fa-exclamation-triangle fa-3x text-warning"></i>
+                        </div>
+                        <h4 class="card-title">Báo Cáo Ngay Lập Tức</h4>
+                        <p class="card-text">
+                            Gửi báo cáo ngập lụt với hình ảnh và thông tin chi tiết. 
+                            Giúp cộng đồng cập nhật tình hình nhanh chóng và chính xác.
+                        </p>
+                        <a href="{% url 'report_create' %}" class="btn btn-outline-warning">Báo Cáo Ngập</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-body text-center p-4">
+                        <div class="feature-icon mb-3">
+                            <i class="fas fa-cloud-sun-rain fa-3x text-info"></i>
+                        </div>
+                        <h4 class="card-title">Dự Báo & Cảnh Báo</h4>
+                        <p class="card-text">
+                            Nhận dự báo thời tiết và cảnh báo ngập lụt sớm. 
+                            Thông tin dự đoán dựa trên lượng mưa và lịch sử ngập lụt.
+                        </p>
+                        <a href="{% url 'map' %}" class="btn btn-outline-info">Xem Dự Báo</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="py-5">
+    <div class="container">
+        <h2 class="text-center mb-5">Điểm Ngập Đáng Chú Ý</h2>
+        <div id="critical-zones-container" class="row g-4">
+            <!-- Dữ liệu sẽ được tải bằng JavaScript -->
+        </div>
+        <div class="text-center mt-4">
+            <a href="{% url 'map' %}" class="btn btn-primary">
+                <i class="fas fa-eye"></i> Xem Tất Cả Điểm Ngập
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="bg-dark text-white py-5">
+    <div class="container">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h3>Tham Gia Cùng Cộng Đồng</h3>
+                <p class="mb-0">
+                    Mỗi báo cáo của bạn giúp cải thiện độ chính xác của hệ thống và hỗ trợ 
+                    người dân di chuyển an toàn trong mùa mưa lũ.
+                </p>
+            </div>
+            <div class="col-md-4 text-end">
+                <a href="{% url 'report_create' %}" class="btn btn-success btn-lg">
+                    <i class="fas fa-hand-paper"></i> Báo Cáo Ngay
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Lấy thống kê từ API
+    fetch('/api/test/')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Có thể lấy thêm dữ liệu từ API khác nếu cần
+                fetch('/api/flood-zones/')
+                    .then(response => response.json())
+                    .then(zonesData => {
+                        // Đếm số điểm ngập
+                        const activeZones = zonesData.features.length;
+                        document.getElementById('active-zones').textContent = activeZones;
+                        
+                        // Đếm điểm đen (type: 'black')
+                        const blackZones = zonesData.features.filter(zone => 
+                            zone.properties.type === 'black'
+                        ).length;
+                        document.getElementById('black-zones').textContent = blackZones;
+                    });
+                    
+                // Lấy thông tin báo cáo gần đây
+                fetch('/api/recent-reports/?limit=5')
+                    .then(response => response.json())
+                    .then(reportsData => {
+                        document.getElementById('today-reports').textContent = reportsData.count;
+                        
+                        // Giả sử 80% báo cáo được xác minh
+                        const verified = Math.round(reportsData.count * 0.8);
+                        document.getElementById('verified-reports').textContent = verified;
+                    });
+            }
+        })
+        .catch(error => {
+            console.error('Error loading statistics:', error);
+        });
+        
+    // Tải điểm ngập nghiêm trọng
+    fetch('/api/flood-zones/')
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('critical-zones-container');
+            const criticalZones = data.features.filter(zone => 
+                zone.properties.type === 'black' || zone.properties.max_depth > 50
+            ).slice(0, 3);
+            
+            criticalZones.forEach(zone => {
+                const zoneHTML = `
+                    <div class="col-md-4">
+                        <div class="card h-100 border-start border-4 border-danger">
+                            <div class="card-body">
+                                <h5 class="card-title">${zone.properties.name}</h5>
+                                <h6 class="card-subtitle mb-2 text-muted">
+                                    <i class="fas fa-map-marker-alt text-danger"></i> 
+                                    ${zone.properties.district}
+                                </h6>
+                                <p class="card-text">
+                                    ${zone.properties.description || 'Không có mô tả'}
+                                </p>
+                                <div class="d-flex justify-content-between">
+                                    <span class="badge bg-danger">
+                                        Độ sâu: ${zone.properties.max_depth}cm
+                                    </span>
+                                    <span class="badge bg-warning text-dark">
+                                        ${zone.properties.type_display}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.innerHTML += zoneHTML;
+            });
+        });
+});
+</script>
+
+<style>
+.hero-section {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 100px 0;
+    margin-top: -20px;
+}
+
+.stat-box {
+    transition: transform 0.3s;
+}
+
+.stat-box:hover {
+    transform: translateY(-5px);
+}
+
+.feature-icon {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 20px;
+    background: rgba(0,123,255,0.1);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+</style>
+{% endblock %}

@@ -1,0 +1,27 @@
+[workspace]
+authors = ["mwc04 <luongdung1018@gmail.com>"]
+channels = ["conda-forge"]
+name = "hanoi_flood"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+gdal = ">=3.12.0,<4"
+python = "3.12.*"
+django-crispy-forms = ">=2.5,<3"
+django = ">=6.0,<7"
+crispy-bootstrap5 = ">=2025.6,<2026"
+pillow = ">=12.0.0,<13"
+requests = ">=2.32.5,<3"
+psycopg2-binary = ">=2.9.10,<3"
+django-leaflet = ">=0.33.0,<0.34"
+pip = ">=25.3,<26"
+djangorestframework-gis = ">=1.2.0,<2"
+
+[pypi-dependencies]
+django-geojson = "*"
+rasterio = ">=1.4"
+shapely = ">=2.1"
+numpy = "*"

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bản đồ Ngập lụt Hà Nội - TEST</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #f0f2f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        #map {
+            width: 100%;
+            height: 600px;
+            border-radius: 8px;
+            border: 2px solid #ddd;
+        }
+        
+        .controls {
+            margin: 20px 0;
+            text-align: center;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 5px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        
+        .btn:hover {
+            background: #2980b9;
+        }
+        
+        .info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌊 Bản đồ Ngập lụt Hà Nội - TEST</h1>
+        <p>Đây là trang test bản đồ Leaflet với Django</p>
+        
+        <div class="controls">
+            <button class="btn" onclick="addMarker()">Thêm Marker</button>
+            <button class="btn" onclick="clearMarkers()">Xóa Marker</button>
+            <button class="btn" onclick="zoomToHanoi()">Về Hà Nội</button>
+            <a href="/" class="btn" style="background:#27ae60;">Trang chủ</a>
+        </div>
+        
+        <div id="map"></div>
+        
+        <div class="info">
+            <h3>Thông tin bản đồ:</h3>
+            <p><strong>Tọa độ trung tâm:</strong> <span id="coords">21.0285, 105.8542</span></p>
+            <p><strong>Zoom level:</strong> <span id="zoom">12</span></p>
+            <p><strong>Số markers:</strong> <span id="marker-count">1</span></p>
+        </div>
+    </div>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // Khởi tạo bản đồ
+        var map = L.map('map').setView([21.0285, 105.8542], 12);
+        
+        // Thêm tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
+        }).addTo(map);
+        
+        // Mảng lưu các markers
+        var markers = [];
+        
+        // Thêm marker chính
+        var mainMarker = L.marker([21.0285, 105.8542])
+            .addTo(map)
+            .bindPopup('<b>Hà Nội</b><br>Thủ đô Việt Nam<br>Tọa độ: 21.0285°N, 105.8542°E')
+            .openPopup();
+        
+        markers.push(mainMarker);
+        updateMarkerCount();
+        
+        // Thêm vòng tròn minh họa
+        L.circle([21.0285, 105.8542], {
+            color: 'blue',
+            fillColor: '#30f',
+            fillOpacity: 0.2,
+            radius: 1500
+        }).addTo(map).bindPopup('Khu vực trung tâm');
+        
+        // Xử lý sự kiện bản đồ
+        map.on('move', updateMapInfo);
+        map.on('zoom', updateMapInfo);
+        
+        // Xử lý click trên bản đồ
+        map.on('click', function(e) {
+            var marker = L.marker(e.latlng)
+                .addTo(map)
+                .bindPopup('Click tại:<br>' + 
+                          'Lat: ' + e.latlng.lat.toFixed(6) + '<br>' +
+                          'Lng: ' + e.latlng.lng.toFixed(6))
+                .openPopup();
+            
+            markers.push(marker);
+            updateMarkerCount();
+        });
+        
+        // Hàm cập nhật thông tin bản đồ
+        function updateMapInfo() {
+            var center = map.getCenter();
+            document.getElementById('coords').textContent = 
+                center.lat.toFixed(4) + ', ' + center.lng.toFixed(4);
+            document.getElementById('zoom').textContent = map.getZoom();
+        }
+        
+        // Hàm cập nhật số lượng markers
+        function updateMarkerCount() {
+            document.getElementById('marker-count').textContent = markers.length;
+        }
+        
+        // Hàm thêm marker ngẫu nhiên
+        function addMarker() {
+            var randomLat = 21.0285 + (Math.random() - 0.5) * 0.1;
+            var randomLng = 105.8542 + (Math.random() - 0.5) * 0.1;
+            
+            var marker = L.marker([randomLat, randomLng])
+                .addTo(map)
+                .bindPopup('Marker #' + (markers.length + 1) + '<br>' +
+                          'Tọa độ: ' + randomLat.toFixed(6) + ', ' + randomLng.toFixed(6));
+            
+            markers.push(marker);
+            updateMarkerCount();
+        }
+        
+        // Hàm xóa tất cả markers
+        function clearMarkers() {
+            markers.forEach(function(marker) {
+                map.removeLayer(marker);
+            });
+            markers = [];
+            updateMarkerCount();
+        }
+        
+        // Hàm zoom về Hà Nội
+        function zoomToHanoi() {
+            map.setView([21.0285, 105.8542], 12);
+        }
+        
+        // Khởi tạo thông tin
+        updateMapInfo();
+        
+        console.log('✅ Bản đồ đã được tải thành công!');
+    </script>
+</body>
+</html>
