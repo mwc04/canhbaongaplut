@@ -35,8 +35,6 @@ function initMap() {
         maxZoom: 19,
         bounds: HANOI_BOUNDS
     }).addTo(map);
-    
-    // Ngăn kéo ra ngoài Hà Nội
     map.on('drag', function() {
         map.panInsideBounds(HANOI_BOUNDS, { animate: false });
     });
@@ -239,6 +237,13 @@ function createLocationPopup(data, lat, lon, locationName) {
     const weather = data.weather || {};
     const location = data.location || {};
     
+    // Lấy thông tin độ sâu nếu có
+    const floodDepth = floodCheck.depth_cm || floodCheck.depth || floodCheck.max_depth || 0;
+    const lastUpdated = floodCheck.last_updated || '';
+    
+    // Format tên địa điểm
+    const displayName = locationName || location.address || 'Vị trí đã chọn';
+    
     let html = `
         <div class="location-popup-container" style="
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -282,7 +287,7 @@ function createLocationPopup(data, lat, lon, locationName) {
                                 overflow: hidden;
                                 text-overflow: ellipsis;
                             ">
-                                ${escapeHtml(locationName || location.address || 'Vị trí đã chọn')}
+                                ${escapeHtml(displayName)}
                             </h3>
                             <p style="
                                 margin: 3px 0 0 0;
@@ -297,7 +302,6 @@ function createLocationPopup(data, lat, lon, locationName) {
                             </p>
                         </div>
                     </div>
-
                 </div>
             </div>
             
@@ -347,6 +351,33 @@ function createLocationPopup(data, lat, lon, locationName) {
                             </p>
                         </div>
                     </div>
+                    
+                    <!-- Hiển thị thông tin chi tiết nếu có ngập -->
+                    ${floodCheck.has_flood && floodDepth > 0 ? `
+                    <div style="
+                        background: rgba(254, 215, 215, 0.3);
+                        border-radius: 6px;
+                        padding: 8px;
+                        margin-top: 8px;
+                        border-left: 3px solid #f56565;
+                    ">
+                        <div style="display: flex; align-items: center; margin-bottom: 4px;">
+                            <i class="fas fa-ruler-vertical me-2" style="color: #c53030; font-size: 11px;"></i>
+                            <span style="font-size: 11px; color: #9b2c2c; font-weight: 600;">
+                                Độ sâu: <span style="color: #c53030;">${floodDepth}cm</span>
+                            </span>
+                        </div>
+                        
+                        ${lastUpdated ? `
+                        <div style="display: flex; align-items: center;">
+                            <i class="fas fa-clock me-2" style="color: #9b2c2c; font-size: 11px;"></i>
+                            <span style="font-size: 11px; color: #9b2c2c;">
+                                Cập nhật: ${escapeHtml(lastUpdated)}
+                            </span>
+                        </div>
+                        ` : ''}
+                    </div>
+                    ` : ''}
                 </div>
                 
                 <!-- Thông tin thời tiết -->
@@ -412,8 +443,8 @@ function createLocationPopup(data, lat, lon, locationName) {
                 </div>
                 
                 <!-- Nút hành động -->
-                <div class="action-buttons" style="display: flex; gap: 8px;">
-                    <button onclick="checkFloodAtLocation(${lat}, ${lon}, '${escapeString(locationName)}')" 
+                <div class="action-buttons" style="display: flex; gap: 8px; margin-bottom: ${floodCheck.has_flood && floodDepth > 10 ? '10px' : '0'};">
+                    <button onclick="checkFloodAtLocation(${lat}, ${lon}, '${escapeString(displayName)}')" 
                             style="
                                 flex: 1;
                                 background: linear-gradient(135deg, #4299e1, #3182ce);
@@ -459,7 +490,61 @@ function createLocationPopup(data, lat, lon, locationName) {
                         <span>Báo cáo</span>
                     </button>
                 </div>
-                
+    `;
+    
+    // NÚT DỰ ĐOÁN THỜI GIAN CẠN (nếu có ngập và độ sâu > 10cm)
+    if (floodCheck.has_flood && floodDepth > 10) {
+        html += `
+                <div style="margin-bottom: 10px;">
+                    <button onclick="predictDrainageForFloodLocation(${lat}, ${lon}, '${escapeString(displayName)}', ${floodDepth})" 
+                            style="
+                                width: 100%;
+                                background: linear-gradient(135deg, #f6ad55, #ed8936);
+                                color: white;
+                                border: none;
+                                padding: 10px 15px;
+                                border-radius: 6px;
+                                font-size: 13px;
+                                font-weight: 600;
+                                cursor: pointer;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                gap: 6px;
+                                transition: all 0.3s;
+                            "
+                            onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(246, 173, 85, 0.3)'"
+                            onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'">
+                        <i class="fas fa-clock me-1"></i>
+                        <span>Dự đoán thời gian cạn</span>
+                    </button>
+                    <p style="margin: 5px 0 0 0; font-size: 11px; color: #718096; text-align: center;">
+                        <i class="fas fa-info-circle me-1"></i>
+                        Độ sâu hiện tại: ${floodDepth}cm
+                    </p>
+                </div>
+        `;
+    }
+    // Thông báo nếu độ sâu ≤ 10cm
+    else if (floodCheck.has_flood && floodDepth > 0) {
+        html += `
+                <div style="
+                    background: #f0f9ff;
+                    border: 1px solid #bee3f8;
+                    border-radius: 6px;
+                    padding: 8px;
+                    margin-bottom: 10px;
+                    text-align: center;
+                ">
+                    <p style="margin: 0; font-size: 11px; color: #2b6cb0;">
+                        <i class="fas fa-info-circle me-1"></i>
+                        Độ sâu thấp (${floodDepth}cm) - Nước sẽ cạn nhanh
+                    </p>
+                </div>
+        `;
+    }
+    
+    html += `
                 <!-- Footer -->
                 <div style="
                     margin-top: 12px;
@@ -826,7 +911,6 @@ async function checkFloodAtLocation(lat, lon, locationName = '') {
     }
 }
 
-
 function displayFloodCheckResults(data, lat, lon, locationName) {
     console.log('📊 Hiển thị kết quả kiểm tra ngập');
     
@@ -992,6 +1076,17 @@ function displayFloodCheckResults(data, lat, lon, locationName) {
                     <i class="fas fa-expand me-1"></i>
                     Xem trạng thái khu vực
                 </button>
+                
+                <!-- NÚT DỰ ĐOÁN THỜI GIAN CẠN (chỉ hiện nếu có ngập) -->
+                ${floodCheck.has_flood ? `
+                <button
+                    id="predict-drainage-btn"
+                    class="btn btn-warning btn-sm"
+                    onclick="predictDrainageForFloodLocation(${lat}, ${lon})">
+                    <i class="fas fa-clock me-1"></i>
+                    Dự đoán thời gian cạn
+                </button>
+                ` : ''}
             </div>
         </div>
     `;
@@ -1298,7 +1393,8 @@ async function loadFloodZones() {
     } finally {
         hideLoadingOnMap();
     }
-}async function loadFloodZones() {
+}
+async function loadFloodZones() {
     showLoadingOnMap();
     
     try {
@@ -1314,6 +1410,8 @@ async function loadFloodZones() {
         // Xử lý cấu trúc dữ liệu đơn giản
         let features = [];
         
+        await updateControlPanelStats();
+
         if (data && data.data && data.data.flood_zones) {
             // Cấu trúc: {data: {flood_zones: [...]}}
             features = data.data.flood_zones;
@@ -1357,6 +1455,58 @@ async function loadFloodZones() {
         hideLoadingOnMap();
     }
 }
+
+// ============ CẬP NHẬT THỐNG KÊ CONTROL PANEL ============
+async function updateControlPanelStats() {
+    console.log('📊 Đang cập nhật thống kê control panel...');
+    
+    try {
+        const response = await fetch('/api/statistics/');
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const stats = data.stats;
+            
+            // Cập nhật tất cả các số liệu
+            updateStatNumber('total-zones', stats.zones?.total || 0);
+            updateStatNumber('active-zones', stats.zones?.active || 0);
+            updateStatNumber('total-reports', stats.reports?.total || 0);
+            updateStatNumber('verified-reports', stats.reports?.verified || 0);
+            
+            console.log('✅ Đã cập nhật thống kê control panel');
+            
+        } else {
+            console.error('❌ API trả về lỗi:', data.error);
+        }
+        
+    } catch (error) {
+        console.error('❌ Lỗi cập nhật thống kê:', error);
+    }
+}
+
+// ============ CẬP NHẬT MỘT SỐ LIỆU ============
+function updateStatNumber(elementId, newValue) {
+    const element = document.getElementById(elementId);
+    if (!element) return;
+    
+    const oldValue = parseInt(element.textContent) || 0;
+    
+    // Chỉ cập nhật nếu khác
+    if (oldValue !== newValue) {
+        element.textContent = newValue;
+        
+        // Thêm hiệu ứng visual
+        element.classList.add('updated');
+        setTimeout(() => {
+            element.classList.remove('updated');
+        }, 500);
+    }
+}
 function displayFloodZonesOnMap(geojsonData) {
     if (floodZonesLayer) {
         map.removeLayer(floodZonesLayer);
@@ -1374,6 +1524,7 @@ function displayFloodZonesOnMap(geojsonData) {
     }
     
     console.log(`🔍 Có ${features.length} điểm ngập để hiển thị`);
+    
     floodZonesLayer = L.geoJSON(geojsonData, {
         style: function(feature) {
             const props = feature.properties || {};
@@ -1395,24 +1546,77 @@ function displayFloodZonesOnMap(geojsonData) {
         },
         onEachFeature: function(feature, layer) {
             const props = feature.properties || {};
+            
+            // Lấy độ sâu
+            let maxDepth = 0;
+            for (const key in props) {
+                const lowerKey = key.toLowerCase();
+                if (lowerKey.includes('depth') || lowerKey.includes('độ sâu') || lowerKey.includes('cm')) {
+                    const value = props[key];
+                    if (typeof value === 'string') {
+                        const match = value.match(/(\d+(\.\d+)?)/);
+                        if (match) {
+                            maxDepth = Number(match[1]);
+                            break;
+                        }
+                    } else if (typeof value === 'number') {
+                        maxDepth = value;
+                        break;
+                    }
+                }
+            }
+            
+            // Thử các key phổ biến nếu chưa tìm thấy
+            if (maxDepth === 0) {
+                const commonDepthKeys = ['max_depth_cm', 'max_depth', 'depth_cm', 'depth'];
+                for (const key of commonDepthKeys) {
+                    if (props[key] !== undefined && props[key] !== null && props[key] !== '') {
+                        const numValue = Number(props[key]);
+                        if (!isNaN(numValue)) {
+                            maxDepth = numValue;
+                            break;
+                        }
+                    }
+                }
+            }
+            
             const name = props.name || 'Điểm ngập';
             const zoneTypeDisplay = props.zone_type_display || props.type_display || props.zone_type || props.type || 'Không xác định';
             const district = props.district || '';
-            const maxDepth = props.max_depth_cm || props.max_depth || 0;
             const street = props.street || '';
             const lastReported = props.last_reported || '';
             
+            // Lấy flood_report_id từ properties
+            const floodReportId = props.flood_report_id || props.report_id || null;
+            
+            // Lấy tọa độ trung tâm
+            let centerLat = 0, centerLng = 0;
+            try {
+                if (feature.geometry && feature.geometry.type === 'Point') {
+                    centerLng = feature.geometry.coordinates[0];
+                    centerLat = feature.geometry.coordinates[1];
+                } else if (layer.getBounds) {
+                    const bounds = layer.getBounds();
+                    const center = bounds.getCenter();
+                    centerLat = center.lat;
+                    centerLng = center.lng;
+                }
+            } catch (error) {
+                console.warn('Lỗi lấy tọa độ:', error);
+            }
+            
+            // Escape cho JavaScript
+            const jsEscapedName = escapeString(name);
+            
+            // Tạo popup content
             const popupContent = `
-                <div style="min-width: 250px; padding: 10px;">
+                <div style="min-width: 280px; padding: 15px;">
                     <h6 style="color: #2c3e50; margin-bottom: 8px;">
                         <i class="fas fa-water me-2"></i>${escapeHtml(name)}
                     </h6>
                     
                     <div style="margin-bottom: 10px;">
-                        <span class="badge" style="background-color: ${props.zone_type === 'black' ? '#c0392b' : 
-                                                              props.zone_type === 'frequent' ? '#e74c3c' : 
-                                                              props.zone_type === 'seasonal' ? '#f39c12' : 
-                                                              props.zone_type === 'rain' ? '#3498db' : '#95a5a6'}">
+                        <span class="badge" style="background-color: #3498db; color: white; padding: 4px 8px; border-radius: 4px;">
                             ${escapeHtml(zoneTypeDisplay)}
                         </span>
                         ${district ? `<span class="badge bg-secondary ms-1">${escapeHtml(district)}</span>` : ''}
@@ -1440,15 +1644,46 @@ function displayFloodZonesOnMap(geojsonData) {
                             </p>
                         ` : ''}
                     </div>
+                    
+                    <!-- NÚT DỰ ĐOÁN - MỞ DASHBOARD -->
+                    <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #eee;">
+                        <button onclick="predictDrainageForFloodLocation(${centerLat}, ${centerLng}, '${jsEscapedName}', ${maxDepth}, ${floodReportId ? floodReportId : 'null'})" 
+                                style="
+                                    width: 100%;
+                                    background: ${maxDepth > 2 ? 'linear-gradient(135deg, #f6ad55, #ed8936)' : '#95a5a6'};
+                                    color: white;
+                                    border: none;
+                                    padding: 10px;
+                                    border-radius: 6px;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    cursor: pointer;
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    gap: 8px;
+                                    ${maxDepth <= 2 ? 'opacity: 0.7; cursor: not-allowed;' : ''}
+                                "
+                                ${maxDepth <= 2 ? 'disabled title="Độ sâu phải lớn hơn 2cm"' : ''}>
+                            <i class="fas fa-clock"></i>
+                            ${maxDepth > 2 ? 'Dự đoán & Mở Dashboard' : 'Độ sâu thấp'}
+                        </button>
+                        
+                        <!-- INFO -->
+                        <div style="margin-top: 8px; text-align: center;">
+                            <p style="margin: 0; font-size: 10px; color: #718096;">
+                                <i class="fas fa-info-circle me-1"></i>
+                                ${floodReportId ? `ID: ${floodReportId} | ` : ''}Độ sâu: ${maxDepth}cm
+                            </p>
+                        </div>
+                    </div>
                 </div>
             `;
             
             layer.bindPopup(popupContent);
             
-            // Click vào zone để kiểm tra - SỬA LẠI
             layer.on('click', function(e) {
                 if (e.latlng) {
-                    // Gọi hàm đúng tên - checkFloodAtLocation
                     checkFloodAtLocation(e.latlng.lat, e.latlng.lng, name);
                 }
             });
@@ -1457,11 +1692,9 @@ function displayFloodZonesOnMap(geojsonData) {
     
     console.log(`✅ Đã hiển thị ${features.length} điểm ngập`);
 }
-
 // ============ BÁO CÁO NGẬP ============
 function setupMapClickHandler() {
     map.on('click', function(e) {
-        // Kiểm tra có trong Hà Nội không
         if (!HANOI_BOUNDS.contains(e.latlng)) {
             showNotification('Vui lòng chọn vị trí trong khu vực Hà Nội', 'warning');
             return;
@@ -1621,6 +1854,8 @@ async function submitFloodReport() {
         
         const data = await response.json();
         console.log('📥 Phản hồi từ server:', data);
+
+        
         
         if (data.success) {
             showNotification(data.message || '✅ Báo cáo đã được gửi thành công!', 'success');
@@ -1650,6 +1885,8 @@ async function submitFloodReport() {
                     modal.hide();
                 }
             }
+
+            updateControlPanelStats();
             
             // Reload data sau 2 giây
             setTimeout(() => {
@@ -1669,9 +1906,39 @@ async function submitFloodReport() {
     }
 }
 
+// ============ CẬP NHẬT TOÀN BỘ HỆ THỐNG ============
+async function refreshSystem() {
+    console.log('🔄 Đang cập nhật toàn bộ hệ thống...');
+    
+    // Hiển thị loading
+    const updateBtn = document.querySelector('.refresh-btn');
+    if (updateBtn) {
+        const originalText = updateBtn.innerHTML;
+        updateBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Đang cập nhật...';
+        updateBtn.disabled = true;
+        
+        try {
+            // 1. Cập nhật thống kê
+            await updateControlPanelStats();
+            
+            // 2. Load lại điểm ngập
+            await loadFloodZones();
+            
+            // 3. Hiển thị thông báo
+            showNotification('✅ Đã cập nhật toàn bộ hệ thống', 'success');
+            
+        } catch (error) {
+            console.error('❌ Lỗi cập nhật hệ thống:', error);
+            showNotification('❌ Có lỗi xảy ra khi cập nhật', 'error');
+        } finally {
+            updateBtn.innerHTML = originalText;
+            updateBtn.disabled = false;
+        }
+    }
+}
+
 // ============ THÔNG TIN THỜI TIẾT ============
 function setupWeatherAutoUpdate() {
-    // Cập nhật thời tiết mỗi 10 phút
     weatherUpdateInterval = setInterval(() => {
         const center = map.getCenter();
         updateWeatherInfo(center.lat, center.lng);
@@ -2198,319 +2465,3 @@ function updateControlPanelStats() {
 // Gọi khi khởi tạo
 updateControlPanelStats();
 
-
-// ============ LẤY VỊ TRÍ HIỆN TẠI ============
-async function getCurrentLocation() {
-    console.log('📍 Đang lấy vị trí hiện tại...');
-    
-    // Hiển thị loading
-    showNotification('📍 Đang lấy vị trí của bạn...', 'info');
-    
-    // Kiểm tra trình duyệt có hỗ trợ Geolocation API không
-    if (!navigator.geolocation) {
-        showNotification('Trình duyệt của bạn không hỗ trợ lấy vị trí', 'error');
-        return;
-    }
-    
-    try {
-        // Yêu cầu quyền truy cập vị trí
-        const position = await new Promise((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-                enableHighAccuracy: true,  // Sử dụng GPS nếu có
-                timeout: 10000,           // Thời gian chờ tối đa 10 giây
-                maximumAge: 0             // Không sử dụng vị trí cũ
-            });
-        });
-        
-        const lat = position.coords.latitude;
-        const lng = position.coords.longitude;
-        const accuracy = position.coords.accuracy; // Độ chính xác (mét)
-        
-        console.log(`📍 Vị trí hiện tại: ${lat}, ${lng} (độ chính xác: ${accuracy}m)`);
-        
-        // Kiểm tra xem có trong Hà Nội không
-        if (!HANOI_BOUNDS.contains([lat, lng])) {
-            showNotification('📍 Vị trí của bạn không nằm trong Hà Nội', 'warning');
-            // Vẫn hiển thị nhưng cảnh báo
-        }
-        
-        // Di chuyển bản đồ đến vị trí hiện tại
-        map.setView([lat, lng], 16);
-        
-        // Xóa marker cũ nếu có
-        if (userLocationMarker) {
-            map.removeLayer(userLocationMarker);
-        }
-        
-        // Tạo marker mới cho vị trí hiện tại
-        userLocationMarker = L.marker([lat, lng], {
-            icon: L.divIcon({
-                html: `
-                    <div style="
-                        width: 40px;
-                        height: 40px;
-                        background: linear-gradient(135deg, #3498db, #2980b9);
-                        border-radius: 50%;
-                        border: 3px solid white;
-                        box-shadow: 0 3px 15px rgba(52, 152, 219, 0.6);
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        color: white;
-                        font-size: 16px;
-                        position: relative;
-                    ">
-                        <i class="fas fa-location-arrow"></i>
-                        ${accuracy < 50 ? `
-                            <div style="
-                                position: absolute;
-                                top: -5px;
-                                right: -5px;
-                                width: 15px;
-                                height: 15px;
-                                background: #2ecc71;
-                                border-radius: 50%;
-                                border: 2px solid white;
-                            "></div>
-                        ` : ''}
-                    </div>
-                `,
-                className: 'user-location-marker',
-                iconSize: [40, 40],
-                iconAnchor: [20, 40]
-            })
-        }).addTo(map);
-        
-        // Thêm popup thông tin
-        const accuracyText = accuracy < 50 ? 'Cao' : (accuracy < 200 ? 'Trung bình' : 'Thấp');
-        
-        userLocationMarker.bindPopup(`
-            <div style="min-width: 250px; padding: 10px;">
-                <h6 style="color: #2c3e50; margin-bottom: 8px;">
-                    <i class="fas fa-user-circle me-2"></i>Vị trí của bạn
-                </h6>
-                
-                <div style="margin-bottom: 10px;">
-                    <p style="margin: 5px 0;">
-                        <i class="fas fa-crosshairs me-2" style="color: #3498db;"></i>
-                        <strong>Tọa độ:</strong> ${lat.toFixed(6)}, ${lng.toFixed(6)}
-                    </p>
-                    
-                    <p style="margin: 5px 0;">
-                        <i class="fas fa-bullseye me-2" style="color: ${accuracy < 50 ? '#2ecc71' : accuracy < 200 ? '#f39c12' : '#e74c3c'}"></i>
-                        <strong>Độ chính xác:</strong> ${Math.round(accuracy)} mét
-                        <span class="badge ms-2" style="background-color: ${accuracy < 50 ? '#2ecc71' : accuracy < 200 ? '#f39c12' : '#e74c3c'}">
-                            ${accuracyText}
-                        </span>
-                    </p>
-                </div>
-                
-                <div class="d-grid gap-2">
-                    <button class="btn btn-sm btn-primary" onclick="checkFloodAtLocation(${lat}, ${lng}, 'Vị trí của tôi')">
-                        <i class="fas fa-search me-1"></i>Kiểm tra ngập tại đây
-                    </button>
-                    <button class="btn btn-sm btn-outline-secondary" onclick="showReportAtLocation(${lat}, ${lng})">
-                        <i class="fas fa-exclamation-triangle me-1"></i>Báo cáo ngập
-                    </button>
-                </div>
-            </div>
-        `).openPopup();
-        
-        // Kiểm tra ngập tại vị trí này
-        await checkFloodAtLocation(lat, lng, 'Vị trí của tôi');
-        
-        // Hiển thị thông báo thành công
-        showNotification(`✅ Đã lấy vị trí của bạn (độ chính xác: ${Math.round(accuracy)}m)`, 'success');
-        
-        // Cập nhật thời tiết tại vị trí hiện tại
-        try {
-            const response = await fetch(`/api/weather/?lat=${lat}&lng=${lng}`);
-            const data = await response.json();
-            
-            if (data.success && data.current) {
-                updateWeatherInfo(data.current);
-            }
-        } catch (weatherError) {
-            console.error('❌ Lỗi cập nhật thời tiết:', weatherError);
-        }
-        
-        // Lấy tên địa chỉ từ tọa độ
-        getAddressFromCoordinates(lat, lng);
-        
-    } catch (error) {
-        console.error('❌ Lỗi lấy vị trí:', error);
-        
-        let errorMessage = 'Không thể lấy vị trí của bạn. ';
-        
-        switch(error.code) {
-            case error.PERMISSION_DENIED:
-                errorMessage += 'Bạn đã từ chối quyền truy cập vị trí.';
-                break;
-            case error.POSITION_UNAVAILABLE:
-                errorMessage += 'Thông tin vị trí không khả dụng.';
-                break;
-            case error.TIMEOUT:
-                errorMessage += 'Hết thời gian chờ lấy vị trí.';
-                break;
-            default:
-                errorMessage += error.message;
-        }
-        
-        showNotification(errorMessage, 'error');
-        
-        // Fallback: Sử dụng vị trí mặc định (Hồ Gươm)
-        useFallbackLocation();
-    }
-}
-
-// ============ HÀM HỖ TRỢ ============
-
-async function getAddressFromCoordinates(lat, lng) {
-    try {
-        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1`);
-        const data = await response.json();
-        
-        if (data && data.display_name) {
-            console.log('📍 Địa chỉ:', data.display_name);
-            
-            // Cập nhật địa chỉ trong popup
-            if (userLocationMarker && userLocationMarker.getPopup()) {
-                const popup = userLocationMarker.getPopup();
-                const currentContent = popup.getContent();
-                
-                // Thêm địa chỉ vào popup
-                const newContent = currentContent.replace(
-                    '</div>',
-                    `<p style="margin: 5px 0; font-size: 12px; color: #7f8c8d;">
-                        <i class="fas fa-map-marker-alt me-2"></i>
-                        ${data.display_name.substring(0, 80)}...
-                    </p>
-                    </div>`
-                );
-                
-                popup.setContent(newContent);
-            }
-        }
-    } catch (error) {
-        console.error('❌ Lỗi lấy địa chỉ:', error);
-    }
-}
-
-function useFallbackLocation() {
-    console.log('📍 Sử dụng vị trí mặc định (Hồ Gươm)');
-    
-    // Vị trí mặc định: Hồ Gươm, Hà Nội
-    const defaultLat = 21.0285;
-    const defaultLng = 105.8542;
-    
-    map.setView([defaultLat, defaultLng], 14);
-    
-    userLocationMarker = L.marker([defaultLat, defaultLng], {
-        icon: L.divIcon({
-            html: `
-                <div style="
-                    width: 40px;
-                    height: 40px;
-                    background: linear-gradient(135deg, #95a5a6, #7f8c8d);
-                    border-radius: 50%;
-                    border: 3px solid white;
-                    box-shadow: 0 3px 15px rgba(149, 165, 166, 0.6);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    color: white;
-                    font-size: 16px;
-                ">
-                    <i class="fas fa-map-marker-alt"></i>
-                </div>
-            `,
-            className: 'fallback-location-marker',
-            iconSize: [40, 40],
-            iconAnchor: [20, 40]
-        })
-    }).addTo(map);
-    
-    userLocationMarker.bindPopup(`
-        <div style="min-width: 250px; padding: 10px;">
-            <h6 style="color: #2c3e50; margin-bottom: 8px;">
-                <i class="fas fa-info-circle me-2"></i>Vị trí mặc định
-            </h6>
-            <p style="margin: 5px 0;">Không thể lấy vị trí của bạn. Đang hiển thị Hồ Gươm, Hà Nội.</p>
-            <p style="margin: 5px 0;"><strong>Tọa độ:</strong> ${defaultLat.toFixed(6)}, ${defaultLng.toFixed(6)}</p>
-            <button class="btn btn-sm btn-primary mt-2 w-100" onclick="getCurrentLocation()">
-                <i class="fas fa-redo me-1"></i>Thử lại
-            </button>
-        </div>
-    `).openPopup();
-    
-    showNotification('⚠️ Đang sử dụng vị trí mặc định (Hồ Gươm)', 'warning');
-}
-
-function updateWeatherInfo(weather) {
-    // Cập nhật thông tin thời tiết trên control panel
-    if (weather) {
-        const tempElement = document.getElementById('current-temp');
-        const rainElement = document.getElementById('current-rain');
-        const descElement = document.getElementById('weather-desc');
-        const iconElement = document.getElementById('weather-icon');
-        
-        if (tempElement) tempElement.textContent = `${Math.round(weather.temp || 25)}°C`;
-        if (rainElement) rainElement.textContent = `${weather.rain || 0} mm`;
-        if (descElement) descElement.textContent = weather.description || 'Nắng';
-        
-        if (iconElement) {
-            const icons = {
-                '01d': 'fa-sun', '01n': 'fa-moon',
-                '02d': 'fa-cloud-sun', '02n': 'fa-cloud-moon',
-                '03d': 'fa-cloud', '03n': 'fa-cloud',
-                '04d': 'fa-cloud', '04n': 'fa-cloud',
-                '09d': 'fa-cloud-rain', '09n': 'fa-cloud-rain',
-                '10d': 'fa-cloud-showers-heavy', '10n': 'fa-cloud-showers-heavy',
-                '11d': 'fa-bolt', '11n': 'fa-bolt',
-                '13d': 'fa-snowflake', '13n': 'fa-snowflake',
-                '50d': 'fa-smog', '50n': 'fa-smog'
-            };
-            
-            const iconClass = icons[weather.icon || '01d'] || 'fa-cloud-sun';
-            iconElement.innerHTML = `<i class="fas ${iconClass}"></i>`;
-        }
-    }
-}
-
-// ============ HÀM XÓA MARKER ============
-function clearAllMarkers() {
-    console.log('🗑️ Xóa tất cả marker');
-    
-    let markerCount = 0;
-    
-    if (currentSearchMarker) {
-        map.removeLayer(currentSearchMarker);
-        currentSearchMarker = null;
-        markerCount++;
-    }
-    
-    if (clickMarker) {
-        map.removeLayer(clickMarker);
-        clickMarker = null;
-        markerCount++;
-    }
-    
-    if (userLocationMarker) {
-        map.removeLayer(userLocationMarker);
-        userLocationMarker = null;
-        markerCount++;
-    }
-    
-    if (searchCircle) {
-        map.removeLayer(searchCircle);
-        searchCircle = null;
-        markerCount++;
-    }
-    
-    showNotification(`✅ Đã xóa ${markerCount} marker`, 'success');
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-    // Kiểm tra quyền vị trí sau khi bản đồ được khởi tạo
-    setTimeout(checkLocationPermission, 3000);
-});

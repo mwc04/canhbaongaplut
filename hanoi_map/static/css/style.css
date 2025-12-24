@@ -523,3 +523,43 @@
         transform: translateY(-5px);
     }
 }
+
+/* Thêm vào style.css */
+.stat-subtext {
+    font-size: 0.7rem;
+    opacity: 0.8;
+    margin-top: 2px;
+}
+
+.auto-notification-banner {
+    background: linear-gradient(135deg, #3498db, #2980b9);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin-bottom: 15px;
+    animation: fadeIn 0.5s ease;
+}
+
+.auto-notification-banner.warning {
+    background: linear-gradient(135deg, #f39c12, #e67e22);
+}
+
+.auto-notification-banner.danger {
+    background: linear-gradient(135deg, #e74c3c, #c0392b);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Hiệu ứng cho marker tự động */
+.auto-marker {
+    animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+}
+

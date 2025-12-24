@@ -1,16 +1,17 @@
-# hanoi_map/services.py - PHIÊN BẢN ĐẦY ĐỦ VỚI API THỜI TIẾT
 import requests
 from django.conf import settings
 from datetime import datetime, timedelta
 from django.contrib.gis.geos import Point
 from django.contrib.gis.db.models.functions import Distance
 from django.db.models import Count, Avg, Q, Max
+from django.http import JsonResponse
 import json
+from django.utils import timezone
+from datetime import timedelta
 import traceback
 
-from .models import FloodZone, FloodReport, WeatherForecast, FloodPrediction
 
-# Hằng số SRID cho Hà Nội (WGS84)
+from .models import FloodZone, FloodReport, FloodPrediction, FixedFlooding, FloodHistory
 SRID = 4326
 
 
@@ -62,7 +63,7 @@ class LocationSearchService:
             return []
             
         except Exception as e:
-            print(f"❌ Search error: {e}")
+            print(f"❌ Lỗi tìm kiếm: {e}")
             return []
     
     @staticmethod
@@ -175,7 +176,7 @@ class WeatherService:
                 'lon': lon,
                 'appid': self.api_key,
                 'units': 'metric',
-                'cnt': 8,  # 8 bản ghi = 24 giờ
+                'cnt': 8,  
                 'lang': 'vi'
             }
             
@@ -615,7 +616,7 @@ class FloodCheckService:
                     if nearby_reports:
                         messages.append(f'📢 Có {len(nearby_reports)} báo cáo trong 24h')
                 else:
-                    messages.append(f'✅ Database có {total_zones} điểm ngập và {total_reports} báo cáo')
+                    messages.append(f'')
             
             response['message'] = ' | '.join(messages) if messages else 'Đã kiểm tra xong'
             
@@ -641,53 +642,86 @@ class FloodCheckService:
     
     @staticmethod
     def get_area_flood_status(lat, lon, radius_m=2000):
-        """Lấy trạng thái ngập của khu vực - SỬA LỖI SRID"""
+        """Lấy trạng thái ngập của khu vực - CHỈ TRONG BÁN KÍNH"""
         try:
             print(f"🌍 FloodCheckService.get_area_flood_status(radius={radius_m}m)")
             
             point = Point(float(lon), float(lat), srid=SRID)
             print(f"📍 Point with SRID {SRID}: {point}")
             
-            total_zones = FloodZone.objects.filter(is_active=True).count()
-            total_reports = FloodReport.objects.filter(status='verified').count()
-            
-            print(f"📍 Tổng trong DB: {total_zones} điểm ngập, {total_reports} báo cáo")
-            
-            stats = {
-                'total_zones': total_zones,
-                'total_reports': total_reports,
-                'recent_reports': FloodReport.objects.filter(
-                    created_at__gte=datetime.now() - timedelta(hours=1),
-                    status='verified'
-                ).count(),
-                'active_zones': total_zones,
-                'total_verified_reports': total_reports,
-                'search_radius': radius_m
-            }
-            
-            zones_list = []
-            reports_list = []
+            # ============ 1. TÌM ĐIỂM NGẬP TRONG BÁN KÍNH ============
+            zones_in_radius = []
+            zones_count = 0
+            avg_depth = 0
             
             try:
-                some_zones = FloodZone.objects.filter(is_active=True)[:10]
-                for zone in some_zones:
-                    zones_list.append({
-                        'name': zone.name or 'Điểm ngập',
-                        'type': zone.zone_type or 'unknown',
-                        'type_display': zone.get_zone_type_display() if hasattr(zone, 'get_zone_type_display') else zone.zone_type,
-                        'max_depth': zone.max_depth_cm or 0,
-                        'district': zone.district or '',
-                        'street': zone.street or '',
-                        'is_active': zone.is_active,
-                        'report_count': zone.report_count or 0
-                    })
-            except Exception as zone_err:
-                print(f"⚠️ Lỗi lấy zones list: {zone_err}")
+                zones_query = FloodZone.objects.annotate(
+                    distance=Distance('geometry', point)
+                ).filter(
+                    distance__lt=radius_m,
+                    is_active=True
+                )
+                zones_count = zones_query.count()
+                
+                # Tính độ sâu trung bình
+                if zones_count > 0:
+                    total_depth = 0
+                    for zone in zones_query:
+                        zones_in_radius.append({
+                            'name': zone.name or 'Điểm ngập',
+                            'type': zone.zone_type or 'unknown',
+                            'type_display': zone.get_zone_type_display() if hasattr(zone, 'get_zone_type_display') else zone.zone_type,
+                            'max_depth': zone.max_depth_cm or 0,
+                            'district': zone.district or '',
+                            'street': zone.street or '',
+                            'is_active': zone.is_active,
+                            'report_count': zone.report_count or 0
+                        })
+                        if zone.max_depth_cm:
+                            total_depth += zone.max_depth_cm
+                    
+                    if zones_count > 0:
+                        avg_depth = total_depth / zones_count
+                
+                print(f"📍 Tìm thấy {zones_count} điểm ngập trong bán kính {radius_m}m")
+                
+            except Exception as e:
+                print(f"⚠️ Lỗi tìm điểm ngập: {e}")
+                traceback.print_exc()
+            
+            # ============ 2. TÌM BÁO CÁO TRONG BÁN KÍNH ============
+            reports_in_radius = []
+            reports_count = 0
+            recent_reports_count = 0
             
             try:
-                some_reports = FloodReport.objects.filter(status='verified').order_by('-created_at')[:10]
-                for report in some_reports:
-                    reports_list.append({
+                # Báo cáo trong 24h
+                time_threshold = datetime.now() - timedelta(hours=24)
+                recent_time_threshold = datetime.now() - timedelta(hours=1)
+                
+                reports_query = FloodReport.objects.annotate(
+                    distance=Distance('location', point)
+                ).filter(
+                    distance__lt=radius_m,
+                    status='verified',
+                    created_at__gte=time_threshold
+                ).order_by('-created_at')
+                
+                reports_count = reports_query.count()
+                
+                # Báo cáo gần đây (1h)
+                recent_reports_query = FloodReport.objects.annotate(
+                    distance=Distance('location', point)
+                ).filter(
+                    distance__lt=radius_m,
+                    status='verified',
+                    created_at__gte=recent_time_threshold
+                )
+                recent_reports_count = recent_reports_query.count()
+                
+                # Lấy danh sách chi tiết
+                for report in reports_query[:10]:  # Lấy 10 báo cáo mới nhất
+                    reports_in_radius.append({
                         'id': report.id,
                         'address': report.address[:80] + '...' if report.address and len(report.address) > 80 else (report.address or ''),
                         'water_depth': report.water_depth or 0,
@@ -698,33 +732,68 @@ class FloodCheckService:
                         'ward': report.ward or '',
                         'reporter': report.reporter_name or 'Ẩn danh'
                     })
-            except Exception as report_err:
-                print(f"⚠️ Lỗi lấy reports list: {report_err}")
+                
+                print(f"📍 Tìm thấy {reports_count} báo cáo trong 24h (gần đây: {recent_reports_count})")
+                
+            except Exception as e:
+                print(f"⚠️ Lỗi tìm báo cáo: {e}")
+                traceback.print_exc()
             
+            # ============ 3. TÍNH MỨC ĐỘ NGUY CƠ ============
+            risk_level = 'low'
+            risk_color = 'success'
+            risk_text = 'THẤP'
+            
+            if zones_count > 3 or reports_count > 5:
+                risk_level = 'high'
+                risk_color = 'danger'
+                risk_text = 'CAO'
+            elif zones_count > 0 or reports_count > 0:
+                risk_level = 'medium'
+                risk_color = 'warning'
+                risk_text = 'TRUNG BÌNH'
+            else:
+                risk_level = 'low'
+                risk_color = 'success'
+                risk_text = 'THẤP'
+            
+            # ============ 4. TẠO THỐNG KÊ ============
+            stats = {
+                'total_zones': zones_count,
+                'total_reports': reports_count,
+                'recent_reports': recent_reports_count,
+                'max_depth': round(avg_depth, 1) if avg_depth > 0 else 0,
+                'active_zones': zones_count,
+                'search_radius': radius_m
+            }
+            
+            # ============ 5. TẠO THÔNG BÁO ============
             messages = []
-            if total_zones > 0:
-                messages.append(f'Có {total_zones} điểm ngập')
-            if total_reports > 0:
-                messages.append(f'Có {total_reports} báo cáo')
+            if zones_count > 0:
+                messages.append(f'Có {zones_count} điểm ngập')
+            if reports_count > 0:
+                messages.append(f'Có {reports_count} báo cáo trong 24h')
             
             if not messages:
-                messages.append('Không có dữ liệu ngập')
+                messages.append('Không có điểm ngập hoặc báo cáo nào trong khu vực này')
             
             result = {
                 'success': True,
                 'stats': stats,
-                'risk_level': 'low',
-                'risk_score': 0,
-                'zones': zones_list,
-                'reports': reports_list,
+                'risk_level': risk_level,
+                'risk_color': risk_color,
+                'risk_text': risk_text,
+                'zones': zones_in_radius[:5],  # Chỉ lấy 5 điểm đầu
+                'reports': reports_in_radius[:5],  # Chỉ lấy 5 báo cáo đầu
                 'center': {'lat': lat, 'lng': lon},
                 'radius': radius_m,
                 'timestamp': datetime.now().isoformat(),
                 'summary': ' | '.join(messages),
-                'has_data': total_zones > 0 or total_reports > 0,
-                'total_data_in_db': total_zones + total_reports
+                'has_data': zones_count > 0 or reports_count > 0,
+                'total_data_in_radius': zones_count + reports_count
             }
             
+            print(f"📊 Kết quả kiểm tra khu vực: {result['summary']}")
             return result
             
         except Exception as e:
@@ -733,15 +802,17 @@ class FloodCheckService:
             return {
                 'success': False,
                 'error': str(e),
-                'stats': {},
+                'stats': {
+                    'total_zones': 0,
+                    'total_reports': 0,
+                    'recent_reports': 0,
+                    'max_depth': 0
+                },
                 'risk_level': 'unknown',
                 'timestamp': datetime.now().isoformat()
             }
-
-
 class FloodPredictionService:
     """Service dự đoán ngập"""
-    
     @staticmethod
     def get_all_predictions():
         """Lấy tất cả dự đoán"""
@@ -751,3 +822,596 @@ class FloodPredictionService:
         except Exception as e:
             print(f"❌ Lỗi get_all_predictions: {e}")
             return []
+        
+
+# Phần xử lý FixedFlood 
+
+class FixedFloodingService:
+    """Service xử lý FixedFlooding và tích hợp với weather API"""
+    @staticmethod
+    def check_and_activate_by_rainfall(lat, lng, rainfall_mm):
+        """Kiểm tra và kích hoạt FixedFlooding dựa trên lượng mưa"""
+        try:
+            print(f"⚡ FixedFloodingService: Kiểm tra mưa={rainfall_mm}mm/h tại ({lat}, {lng})")
+            point = Point(lng, lat, srid=SRID)
+            activated_floodings = []
+            floodings = FixedFlooding.objects.annotate(
+                distance=Distance('location', point)
+            ).filter(
+                distance__lt=10000,  # 10km
+                is_monitored=True
+            )
+            
+            for flooding in floodings:
+                try:
+                    result = flooding.activate_flood_warning(rainfall_mm, "WeatherService")
+                    if result is True:  
+                        activated_floodings.append(flooding)
+                        FloodZoneService.create_or_update_from_fixed_flooding(flooding, rainfall_mm)
+                        FloodHistoryService.create_from_fixed_flooding(flooding, rainfall_mm) 
+                        print(f"✅ Đã kích hoạt: {flooding.name}")
+                except Exception as e:
+                    print(f"❌ Lỗi kích hoạt FixedFlooding {flooding.id}: {e}")
+                    traceback.print_exc()
+            
+            print(f"📊 Tổng: {len(activated_floodings)} FixedFlooding được kích hoạt")
+            return activated_floodings
+            
+        except Exception as e:
+            print(f"❌ Lỗi check_and_activate_by_rainfall: {e}")
+            traceback.print_exc()
+            return []
+    @staticmethod
+    def get_nearby_floodings(lat, lng, radius_m=5000, only_active=False):
+        """Lấy FixedFlooding trong bán kính"""
+        try:
+            point = Point(lng, lat, srid=SRID)
+            
+            query = FixedFlooding.objects.annotate(
+                distance=Distance('location', point)
+            ).filter(
+                distance__lt=radius_m
+            ).order_by('distance')
+            
+            if only_active:
+                query = query.filter(is_active=True)
+                
+            return query
+            
+        except Exception as e:
+            print(f"❌ Lỗi get_nearby_floodings: {e}")
+            return FixedFlooding.objects.none()
+    @staticmethod
+    def get_active_alerts(lat, lng):
+        """Lấy cảnh báo từ FixedFlooding đang kích hoạt"""
+        try:
+            point = Point(lng, lat, srid=SRID)
+            active_floodings = FixedFlooding.objects.annotate(
+                distance=Distance('location', point)
+            ).filter(
+                distance__lt=5000,
+                is_active=True
+            ).order_by('-severity')
+            
+            alerts = []
+            for flooding in active_floodings:
+                # Tính khoảng cách
+                distance_km = round(flooding.distance.m / 1000, 1) if hasattr(flooding, 'distance') else 0
+                
+                # Xác định mức độ cảnh báo
+                if flooding.predicted_depth_cm >= 50:
+                    alert_level = 'danger'
+                    icon = 'fa-exclamation-triangle'
+                    prefix = '🚨 CẢNH BÁO NGUY HIỂM: '
+                elif flooding.predicted_depth_cm >= 30:
+                    alert_level = 'warning'
+                    icon = 'fa-exclamation-circle'
+                    prefix = '⚠️ CẢNH BÁO: '
+                else:
+                    alert_level = 'info'
+                    icon = 'fa-info-circle'
+                    prefix = 'ℹ️ THÔNG BÁO: '
+                
+                alerts.append({
+                    'level': alert_level,
+                    'icon': icon,
+                    'title': f"{prefix}{flooding.name}",
+                    'message': f"Khu vực này đang có ngập dự báo {flooding.predicted_depth_cm}cm.",
+                    'distance': distance_km,
+                    'details': {
+                        'location': flooding.address,
+                        'predicted_depth': flooding.predicted_depth_cm,
+                        'flood_type': flooding.get_flood_type_display() if hasattr(flooding, 'get_flood_type_display') else flooding.flood_type,
+                        'recommendations': flooding.recommendations
+                    },
+                    'timestamp': datetime.now().isoformat()
+                })
+            
+            return alerts
+            
+        except Exception as e:
+            print(f"❌ Lỗi get_active_alerts: {e}")
+            return []
+    
+    @staticmethod
+    def trigger_manual_activation(flooding_id, rainfall_mm):
+        """Kích hoạt thủ công FixedFlooding (dùng để test)"""
+        try:
+            flooding = FixedFlooding.objects.get(id=flooding_id)
+            
+            # Kích hoạt cảnh báo
+            result = flooding.activate_flood_warning(rainfall_mm, "ManualService")
+            
+            if result:
+                # Tạo FloodZone và lịch sử
+                zone = FloodZoneService.create_or_update_from_fixed_flooding(flooding, rainfall_mm)
+                history = FloodHistoryService.create_from_fixed_flooding(flooding, rainfall_mm)
+                
+                return {
+                    'success': True,
+                    'flooding': flooding,
+                    'zone_created': zone is not None,
+                    'history_created': history is not None
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': f'Lượng mưa {rainfall_mm}mm/h chưa đạt ngưỡng {flooding.rainfall_threshold_mm}mm/h'
+                }
+                
+        except FixedFlooding.DoesNotExist:
+            return {'success': False, 'error': 'Không tìm thấy FixedFlooding'}
+        except Exception as e:
+            print(f"❌ Lỗi trigger_manual_activation: {e}")
+            return {'success': False, 'error': str(e)}
+
+
+class FloodZoneService:
+    """Service xử lý FloodZone từ FixedFlooding"""
+    
+    @staticmethod
+    def create_or_update_from_fixed_flooding(fixed_flooding, rainfall_mm):
+        """Tạo hoặc cập nhật FloodZone từ FixedFlooding"""
+        try:
+            existing_zone = fixed_flooding.flood_zone
+            
+            if existing_zone:
+                # Cập nhật FloodZone hiện có
+                existing_zone.is_active = True
+                existing_zone.max_depth_cm = max(existing_zone.max_depth_cm, fixed_flooding.predicted_depth_cm)
+                existing_zone.last_reported_at = timezone.now()
+                existing_zone.last_flood_date = timezone.now().date()
+                existing_zone.flood_cause = f"Mưa lớn: {rainfall_mm}mm/h (Tự động từ FixedFlooding)"
+                existing_zone.save()
+                print(f"🔄 Đã cập nhật FloodZone #{existing_zone.id}")
+                return existing_zone
+                
+            else:
+                # Tạo FloodZone mới
+                flood_polygon = fixed_flooding.get_flood_polygon()
+                
+                zone_name = f"[Tự động] {fixed_flooding.name}"
+                
+                new_zone = FloodZone.objects.create(
+                    name=zone_name,
+                    zone_type='rain',
+                    geometry=flood_polygon,
+                    district=fixed_flooding.district,
+                    ward=fixed_flooding.ward or '',
+                    street=fixed_flooding.address,
+                    max_depth_cm=fixed_flooding.predicted_depth_cm,
+                    avg_duration_hours=fixed_flooding.duration_hours,
+                    flood_cause=f"Mưa lớn: {rainfall_mm}mm/h (Tự động kích hoạt)",
+                    is_active=True,
+                    last_reported_at=timezone.now(),
+                    last_flood_date=timezone.now().date(),
+                    description=f"Tự động tạo từ FixedFlooding '{fixed_flooding.name}'. Ngưỡng mưa: {fixed_flooding.rainfall_threshold_mm}mm/h. Lượng mưa: {rainfall_mm}mm/h",
+                    solution=fixed_flooding.recommendations or "Di chuyển phương tiện đến nơi cao, tránh đi qua khu vực ngập."
+                )
+                
+                # Liên kết FixedFlooding với FloodZone mới
+                fixed_flooding.flood_zone = new_zone
+                fixed_flooding.save(update_fields=['flood_zone'])
+                
+                print(f"✅ Đã tạo FloodZone #{new_zone.id}")
+                return new_zone
+                
+        except Exception as e:
+            print(f"❌ Lỗi create_or_update_from_fixed_flooding: {e}")
+            traceback.print_exc()
+            return None
+
+
+class FloodHistoryService:
+    """Service xử lý lịch sử ngập"""
+    
+    @staticmethod
+    def create_from_fixed_flooding(fixed_flooding, rainfall_mm):
+        """Ghi lịch sử ngập từ FixedFlooding"""
+        try:
+            flood_zone = fixed_flooding.flood_zone
+            
+            if not flood_zone:
+                print(f"⚠️ FixedFlooding {fixed_flooding.id} không có FloodZone")
+                return None
+
+            history = FloodHistory.objects.create(
+                location=fixed_flooding.location,
+                address=fixed_flooding.address,
+                district=fixed_flooding.district,
+                flood_type=fixed_flooding.flood_type,
+                rainfall_mm=rainfall_mm,
+                water_depth_cm=fixed_flooding.predicted_depth_cm,
+                duration_minutes=int(fixed_flooding.duration_hours * 60),
+                start_time=timezone.now(),
+                timestamp=timezone.now(),
+                source='fixed',
+                source_id=f"fixed_{fixed_flooding.id}",
+                related_zone=flood_zone,
+                description=f"Tự động kích hoạt từ FixedFlooding '{fixed_flooding.name}'. Mưa: {rainfall_mm}mm/h (Ngưỡng: {fixed_flooding.rainfall_threshold_mm}mm/h)",
+                impact_level='major' if fixed_flooding.predicted_depth_cm > 30 else 'moderate'
+            )
+            
+            print(f"📝 Đã ghi lịch sử #{history.id}")
+            return history
+            
+        except Exception as e:
+            print(f"❌ Lỗi create_from_fixed_flooding: {e}")
+            traceback.print_exc()
+            return None
+    
+    @staticmethod
+    def create_from_report(flood_report):
+        """Ghi lịch sử từ báo cáo ngập"""
+        try:
+            history = FloodHistory.objects.create(
+                location=flood_report.location,
+                address=flood_report.address,
+                district=flood_report.district,
+                flood_type='user_report',
+                rainfall_mm=None,
+                water_depth_cm=flood_report.water_depth,
+                duration_minutes=60,  # Mặc định 1 giờ
+                start_time=flood_report.created_at,
+                timestamp=timezone.now(),
+                source='report',
+                source_id=f"report_{flood_report.id}",
+                related_zone=flood_report.flood_zone,
+                related_report=flood_report,
+                description=f"Báo cáo từ người dùng: {flood_report.description[:200] if flood_report.description else 'Không có mô tả'}",
+                impact_level='major' if flood_report.water_depth > 50 else 'moderate' if flood_report.water_depth > 20 else 'minor'
+            )
+            
+            return history
+            
+        except Exception as e:
+            print(f"❌ Lỗi create_from_report: {e}")
+            return None
+# ============ DRAINAGE PREDICTION SERVICE ============
+
+class DrainageTimeService:
+    """
+    Service dự đoán thời gian cạn nước
+    """
+    
+    @staticmethod
+    def predict_drainage_time(flood_report):
+        """Dự đoán thời gian cạn nước cho một FloodReport - PHIÊN BẢN CHÍNH"""
+        try:
+            print(f"⏳ [PREDICT] Bắt đầu dự đoán cho FloodReport #{flood_report.id}")
+            
+            data = DrainageTimeService._collect_prediction_data(flood_report)
+            drainage_hours = DrainageTimeService._calculate_drainage_hours(data)
+            print(f"📊 [PREDICT] Thời gian cạn tính được: {drainage_hours} giờ")
+            result = DrainageTimeService._create_prediction_result(
+                flood_report, data, drainage_hours
+            )
+            prediction_saved = DrainageTimeService._save_prediction_to_db(flood_report, result)
+            
+            if prediction_saved:
+                result['prediction_saved'] = True
+                result['prediction_id'] = prediction_saved.id if hasattr(prediction_saved, 'id') else None
+                print(f"✅ [PREDICT] ĐÃ LƯU THÀNH CÔNG vào database")
+            else:
+                result['prediction_saved'] = False
+                print(f"⚠️ [PREDICT] KHÔNG THỂ LƯU vào database")
+            
+            result['success'] = True
+            return result
+            
+        except Exception as e:
+            print(f"❌ [PREDICT] Lỗi trong predict_drainage_time: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e),
+                'estimated_drainage_time_hours': 0,
+                'message': 'Không thể dự đoán thời gian cạn',
+                'prediction_saved': False
+            }
+    
+    @staticmethod
+    def _collect_prediction_data(flood_report):
+        """Thu thập dữ liệu cần thiết (private)"""
+        from django.utils import timezone
+        
+        return {
+            'water_depth_cm': flood_report.water_depth,
+            'flood_type': getattr(flood_report, 'flood_type', 'rain'),
+            'location': flood_report.location,
+            'timestamp': flood_report.created_at or timezone.now(),
+            'terrain': DrainageTimeService._get_terrain_info(
+                flood_report.location.y if flood_report.location else None,
+                flood_report.location.x if flood_report.location else None
+            ),
+            'weather': DrainageTimeService._get_weather_info(
+                flood_report.location.y if flood_report.location else None,
+                flood_report.location.x if flood_report.location else None
+            ),
+            'current_time': timezone.now()
+        }
+    
+    @staticmethod
+    def _get_terrain_info(lat, lng):
+        """Lấy thông tin địa hình (private)"""
+        # Giả lập dữ liệu
+        return {
+            'elevation': 3.5,
+            'drainage_capacity': 'average',
+            'distance_to_river': 350,
+            'slope_percentage': 2.1,
+            'soil_type': 'clay',
+            'urban_density': 'high'
+        }
+    
+    @staticmethod
+    def _get_weather_info(lat, lng):
+        """Lấy thông tin thời tiết (private)"""
+        try:
+            weather_service = WeatherService()
+            current_weather = weather_service.get_current_weather(lat, lng)
+            
+            if current_weather:
+                return {
+                    'current_rainfall_mm': current_weather.get('rain', 0),
+                    'rainfall_last_3h': current_weather.get('rain', 0) * 3,
+                    'temperature': current_weather.get('temp', 28),
+                    'humidity': current_weather.get('humidity', 75),
+                    'wind_speed': current_weather.get('wind_speed', 2.5)
+                }
+        except Exception as e:
+            print(f"⚠️ Không thể lấy thông tin thời tiết: {e}")
+        return {
+            'current_rainfall_mm': 8.5,
+            'rainfall_last_3h': 25.3,
+            'temperature': 29.2,
+            'humidity': 82,
+            'wind_speed': 12.5
+        }
+    
+    @staticmethod
+    def _calculate_drainage_hours(data):
+        """Tính toán thời gian cạn nước (private)"""
+        try:
+            water_depth = float(data.get('water_depth_cm', 0))
+            
+            if water_depth <= 0:
+                return 0.5
+            
+            terrain = data.get('terrain', {})
+            weather = data.get('weather', {})
+            
+            # Tốc độ thoát nước cơ bản
+            base_rates = {
+                'very_poor': 0.5,
+                'poor': 1.0,
+                'average': 2.0,
+                'good': 3.5,
+                'excellent': 5.0
+            }
+            
+            drainage_capacity = terrain.get('drainage_capacity', 'average')
+            base_rate = base_rates.get(drainage_capacity, 1.5)
+            current_rainfall = float(weather.get('current_rainfall_mm', 0))
+            rain_factor = 1.0
+            if current_rainfall > 30:
+                rain_factor = 0.3
+            elif current_rainfall > 20:
+                rain_factor = 0.5
+            elif current_rainfall > 10:
+                rain_factor = 0.7
+            elif current_rainfall > 5:
+                rain_factor = 0.9
+            
+            elevation = float(terrain.get('elevation', 0))
+            elevation_factor = 1.0 + (elevation / 50) * 0.1 if elevation > 0 else 1.0
+            effective_rate = base_rate * elevation_factor * rain_factor
+            effective_rate = max(effective_rate, 0.1)
+            effective_rate = min(effective_rate, 10.0)
+            drainage_hours = water_depth / effective_rate
+            drainage_hours = round(drainage_hours, 1)
+            drainage_hours = min(drainage_hours, 72)   # Tối đa 3 ngày
+            drainage_hours = max(drainage_hours, 0.5)  # Tối thiểu 30 phút
+            
+            return drainage_hours
+            
+        except Exception as e:
+            print(f"❌ Lỗi tính toán: {e}")
+            return 6.0
+    
+    @staticmethod
+    def _create_prediction_result(flood_report, data, drainage_hours):
+        """Tạo kết quả dự đoán (private)"""
+        completion_time = timezone.now() + timedelta(hours=drainage_hours)
+        if drainage_hours <= 2:
+            level = 'fast'
+            level_text = 'Nhanh'
+            icon = '⚡'
+        elif drainage_hours <= 6:
+            level = 'medium'
+            level_text = 'Trung bình'
+            icon = '⏱️'
+        elif drainage_hours <= 12:
+            level = 'slow'
+            level_text = 'Chậm'
+            icon = '🐌'
+        else:
+            level = 'very_slow'
+            level_text = 'Rất chậm'
+            icon = '🚧'
+        if drainage_hours >= 24:
+            message = f"{icon} Mực nước dự kiến sẽ rút sau khoảng {drainage_hours} giờ ({drainage_hours/24:.1f} ngày)"
+        else:
+            message = f"{icon} Mực nước dự kiến sẽ rút sau khoảng {drainage_hours} giờ"
+        recommendations = [
+            "Theo dõi tình hình thời tiết",
+            "Hạn chế di chuyển qua khu vực ngập",
+            "Kiểm tra phương tiện trước khi sử dụng"
+        ]
+        
+        # Tạo factors_considered
+        factors_considered = [
+            f"Độ sâu nước: {data.get('water_depth_cm', 0)}cm",
+            f"Khả năng thoát nước: {data['terrain'].get('drainage_capacity', 'Không xác định')}",
+            f"Lượng mưa hiện tại: {data['weather'].get('current_rainfall_mm', 0)}mm/h"
+        ]
+        
+        return {
+            'flood_report_id': flood_report.id if hasattr(flood_report, 'id') else None,
+            'water_depth_cm': data.get('water_depth_cm', 0),
+            'estimated_drainage_time_hours': drainage_hours,
+            'estimated_completion_time': completion_time,
+            'completion_time_formatted': completion_time.strftime("%H:%M %d/%m/%Y"),
+            'drainage_level': level,
+            'drainage_level_text': level_text,
+            'message': message,
+            'recommendations': recommendations,
+            'factors_considered': factors_considered,
+            'calculation_time': timezone.now().isoformat()
+        }
+    
+    @staticmethod
+    def _save_prediction_to_db(flood_report, result):
+        """Lưu dự đoán vào database (private) - PHIÊN BẢN ĐƠN GIẢN"""
+        try:
+            from django.utils import timezone
+            from datetime import timedelta
+            from .models import FloodPrediction
+            
+            print(f"💾 [SAVE] Đang lưu dự đoán cho FloodReport #{flood_report.id}")
+            
+            # Tạo prediction đơn giản
+            prediction = FloodPrediction.objects.create(
+                location=flood_report.location,
+                address=getattr(flood_report, 'address', 'Không xác định')[:200],
+                district=getattr(flood_report, 'district', '')[:100],
+                prediction_time=timezone.now(),
+                predicted_depth_cm=getattr(flood_report, 'water_depth', 0),
+                current_depth_cm=getattr(flood_report, 'water_depth', 0),
+                estimated_drainage_time_hours=result.get('estimated_drainage_time_hours', 0),
+                drainage_start_time=timezone.now(),
+                last_depth_update=timezone.now(),
+                risk_level='high' if result.get('estimated_drainage_time_hours', 0) > 24 else 'medium' if result.get('estimated_drainage_time_hours', 0) > 6 else 'low',
+                is_active=True,
+                confidence=70.0,
+                rainfall_mm=0,
+                flood_report=flood_report  # QUAN TRỌNG: Liên kết với flood_report
+            )
+            
+            print(f"✅ [SAVE] ĐÃ LƯU THÀNH CÔNG FloodPrediction #{prediction.id}")
+            print(f"   • ID: {prediction.id}")
+            print(f"   • Address: {prediction.address}")
+            print(f"   • Drainage hours: {prediction.estimated_drainage_time_hours}")
+            print(f"   • FloodReport ID: {prediction.flood_report.id}")
+            
+            return prediction
+            
+        except Exception as e:
+            print(f"❌ [SAVE] Lỗi lưu vào database: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    @staticmethod
+    def get_active_drainage_predictions(limit=20):
+        """
+        Lấy danh sách các dự đoán cạn nước đang hoạt động
+        """
+        try:
+            from .models import FloodPrediction
+            
+            predictions = FloodPrediction.objects.filter(
+                is_active=True
+            ).order_by('-prediction_time')[:limit]
+            
+            results = []
+            for pred in predictions:
+                results.append({
+                    'id': pred.id,
+                    'address': pred.address or "Không xác định",
+                    'district': pred.district or "",
+                    'current_depth': pred.current_depth_cm or pred.predicted_depth_cm,
+                    'estimated_hours': pred.estimated_drainage_time_hours or 0,
+                    'risk_level': pred.risk_level or 'medium',
+                    'report_id': pred.flood_report.id if pred.flood_report else None
+                })
+            
+            return results
+            
+        except Exception as e:
+            print(f"❌ Lỗi get_active_drainage_predictions: {e}")
+            return []
+    
+    @staticmethod
+    def get_drainage_dashboard_data():
+        """
+        Lấy dữ liệu cho dashboard dự đoán cạn nước
+        """
+        try:
+            # Lấy các predictions đang hoạt động
+            active_predictions = DrainageTimeService.get_active_drainage_predictions(limit=50)
+            
+            # Thống kê
+            total_active = len(active_predictions)
+            
+            # Phân loại theo thời gian còn lại
+            fast_drainage = [p for p in active_predictions if p.get('estimated_hours', 0) <= 2]
+            medium_drainage = [p for p in active_predictions if 2 < p.get('estimated_hours', 0) <= 6]
+            slow_drainage = [p for p in active_predictions if p.get('estimated_hours', 0) > 6]
+            
+            # Phân loại theo quận
+            districts = {}
+            for pred in active_predictions:
+                district = pred.get('district', 'Không xác định')
+                if district not in districts:
+                    districts[district] = 0
+                districts[district] += 1
+            
+            dashboard_data = {
+                'summary': {
+                    'total_active_predictions': total_active,
+                    'fast_drainage_count': len(fast_drainage),
+                    'medium_drainage_count': len(medium_drainage),
+                    'slow_drainage_count': len(slow_drainage),
+                    'districts': districts
+                },
+                'soonest_completions': active_predictions[:5],  # Lấy 5 cái mới nhất
+                'last_updated': timezone.now().isoformat()
+            }
+            
+            return dashboard_data
+            
+        except Exception as e:
+            print(f"❌ Lỗi get_drainage_dashboard_data: {e}")
+            return {
+                'summary': {
+                    'total_active_predictions': 0,
+                    'fast_drainage_count': 0,
+                    'medium_drainage_count': 0,
+                    'slow_drainage_count': 0,
+                    'districts': {}
+                },
+                'soonest_completions': [],
+                'last_updated': timezone.now().isoformat()
+            }
